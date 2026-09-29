@@ -4111,7 +4111,7 @@ static void ggml_webgpu_init_memset_pipeline(webgpu_global_context & ctx) {
 static void ggml_backend_webgpu_request_adapter(wgpu::Instance & instance, wgpu::Adapter & adapter) {
     wgpu::RequestAdapterOptions options = {};
 
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
     // TODO: track need for these toggles: https://issues.chromium.org/issues/42251215
     const char * const          adapterEnabledToggles[] = { "vulkan_enable_f16_on_nvidia", "use_vulkan_memory_model" };
     wgpu::DawnTogglesDescriptor adapterTogglesDesc;
@@ -4140,13 +4140,23 @@ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
     ctx->webgpu_global_ctx->adapter.GetLimits(&ctx->webgpu_global_ctx->capabilities.limits);
 
     wgpu::AdapterInfo info{};
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
     wgpu::AdapterPropertiesSubgroupMatrixConfigs subgroup_matrix_configs{};
     if (ctx->webgpu_global_ctx->adapter.HasFeature(wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix)) {
         info.nextInChain = &subgroup_matrix_configs;
     }
 #endif
+    // Under wasi-sdk, the cognition browser-lane host does not
+    // implement the decomposed adapter-info out-param plumbing
+    // (the shim's `wgpuAdapterGetInfo` traps the runtime).  Skip
+    // the call and leave `info` at its default-empty state;
+    // downstream logging picks that up as blank vendor/device
+    // strings.  Subgroup sizes come from the sibling
+    // adapter-info-decomposed.get-subgroup-sizes verb, plumbed
+    // through the shim's cached `wgpu::AdapterInfo`.
+#if !defined(__wasi__)
     ctx->webgpu_global_ctx->adapter.GetInfo(&info);
+#endif
     ctx->webgpu_global_ctx->command_submit_batch_size = ggml_backend_webgpu_get_command_submit_batch_size();
     ctx->webgpu_global_ctx->max_inflight_batches      = ggml_backend_webgpu_get_max_inflight_batches();
     ctx->webgpu_global_ctx->vendor                    = info.vendor;
@@ -4157,7 +4167,7 @@ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
         wgpu::WGSLLanguageFeatureName::Packed4x8IntegerDotProduct);
 
     bool valid_subgroup_matrix_config = false;
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
     // Accept f16 subgroup matrix configurations (square or non-square).
     // NVIDIA GPUs typically report square configs (e.g. 16x16x16),
     // while Intel Xe2 GPUs report non-square configs (e.g. 8x16x16).
@@ -4185,7 +4195,7 @@ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
     // Initialize device
     std::vector<wgpu::FeatureName> required_features       = { wgpu::FeatureName::ShaderF16 };
 
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
     required_features.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
     if (ctx->webgpu_global_ctx->capabilities.supports_subgroup_matrix) {
         required_features.push_back(wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix);
@@ -4201,7 +4211,16 @@ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
 #endif
 
     wgpu::DeviceDescriptor dev_desc;
+    // Under wasi-sdk the browser-lane request-device path re-derives
+    // requiredLimits from the adapter on the JS side (max-out
+    // pattern in webgpu-host-impl.js::requestDevice), so passing a
+    // shim-copied WGPULimits* here would be redundant and adds a
+    // struct-layout mismatch surface between the fork's wgpu 26
+    // headers and the shim's canonical-ABI transmute.  Leave it
+    // unset.
+#if !defined(__wasi__)
     dev_desc.requiredLimits       = &ctx->webgpu_global_ctx->capabilities.limits;
+#endif
     dev_desc.requiredFeatures     = required_features.data();
     dev_desc.requiredFeatureCount = required_features.size();
     dev_desc.SetDeviceLostCallback(
@@ -4221,7 +4240,7 @@ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
                        std::string(message).c_str());
         });
 
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
     // Enable Dawn-specific toggles to increase native performance
     // TODO: Maybe WebGPU needs a "fast" mode where you can request compilers skip adding checks like these,
     //       only for native performance?
@@ -4256,11 +4275,15 @@ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
                               "memset_params_buf");
     ctx->webgpu_global_ctx->queue = ctx->webgpu_global_ctx->device.GetQueue();
 
+#if defined(__wasi__)
+    GGML_LOG_INFO("ggml_webgpu: adapter_info skipped under wasi (browser-lane)\n");
+#else
     GGML_LOG_INFO(
         "ggml_webgpu: adapter_info: vendor_id: %u | vendor: %s | architecture: %s | device_id: %u | name: %s | "
         "device_desc: %s\n",
         info.vendorID, std::string(info.vendor).c_str(), std::string(info.architecture).c_str(), info.deviceID,
         std::string(info.device).c_str(), std::string(info.description).c_str());
+#endif
 }
 
 static webgpu_context initialize_webgpu_context(ggml_backend_dev_t dev) {
@@ -4866,7 +4889,7 @@ ggml_backend_reg_t ggml_backend_webgpu_reg() {
     instance_descriptor.requiredFeatures                     = instance_features.data();
     instance_descriptor.requiredFeatureCount                 = instance_features.size();
 
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
     const char * const          instanceEnabledToggles[] = { "allow_unsafe_apis" };
     wgpu::DawnTogglesDescriptor instanceTogglesDesc;
     instanceTogglesDesc.enabledToggles     = instanceEnabledToggles;
@@ -4885,8 +4908,12 @@ ggml_backend_reg_t ggml_backend_webgpu_reg() {
     }
 
     // WebGPU backend requires f16 support and, on native, implicit device synchronization.
+    // Under wasi-sdk (the cognition browser-lane shim build), the runtime is a
+    // browser-shaped WebGPU host with the same guarantees as emscripten — no
+    // ImplicitDeviceSynchronization feature exposed, and no need to demand it
+    // (the wasm executes single-threaded, JSPI-suspended per WIT verb).
     if (adapter != nullptr && adapter.HasFeature(wgpu::FeatureName::ShaderF16)
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
         && adapter.HasFeature(wgpu::FeatureName::ImplicitDeviceSynchronization)
 #endif
     ) {
