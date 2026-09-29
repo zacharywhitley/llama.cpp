@@ -598,8 +598,17 @@ static webgpu_encoded_op ggml_backend_webgpu_build_multi(webgpu_context &       
         entries.push_back(ggml_webgpu_make_bind_group_entry(params_binding_num, ctx->param_arena.buffer, param_offset,
                                                             ctx->param_arena.slot_size));
 
+        // Keep the auto-derived BindGroupLayout alive past
+        // CreateBindGroup — assigning a temporary directly to
+        // `bind_group_desc.layout` calls the wgpu::BindGroupLayout
+        // destructor at end-of-statement (Release'ing the C handle
+        // before CreateBindGroup dereferences it).  Native Dawn
+        // masks this via pipeline-side refcounting; the wasi-sdk
+        // shim's per-call fresh-box refcount frees immediately and
+        // CreateBindGroup then sees a dangling layout pointer.
+        wgpu::BindGroupLayout bgl = dispatch.pipeline.pipeline.GetBindGroupLayout(0);
         wgpu::BindGroupDescriptor bind_group_desc;
-        bind_group_desc.layout     = dispatch.pipeline.pipeline.GetBindGroupLayout(0);
+        bind_group_desc.layout     = bgl;
         bind_group_desc.entryCount = entries.size();
         bind_group_desc.entries    = entries.data();
         bind_group_desc.label      = dispatch.pipeline.name.c_str();
@@ -685,8 +694,12 @@ static void ggml_backend_webgpu_buffer_memset(webgpu_global_context & ctx,
     params_entry.size                 = WEBGPU_PARAMS_BUF_SIZE_BYTES;
     entries.push_back(params_entry);
 
+    // See sibling use — hold the auto-derived layout in a named
+    // stack variable so it outlives CreateBindGroup under the
+    // wasi-sdk shim's per-call fresh-box refcount.
+    wgpu::BindGroupLayout memset_bgl = ctx->memset_pipeline.pipeline.GetBindGroupLayout(0);
     wgpu::BindGroupDescriptor bind_group_desc;
-    bind_group_desc.layout     = ctx->memset_pipeline.pipeline.GetBindGroupLayout(0);
+    bind_group_desc.layout     = memset_bgl;
     bind_group_desc.entryCount = entries.size();
     bind_group_desc.entries    = entries.data();
     bind_group_desc.label      = ctx->memset_pipeline.name.c_str();
