@@ -12,22 +12,34 @@ endif()
 
 find_package(Threads REQUIRED)
 
+set(MTMD_SOURCES
+    mtmd.cpp
+    mtmd-image.cpp
+    mtmd.h
+    mtmd-internal.h
+    clip.cpp
+    clip.h
+    clip-impl.h
+    clip-model.h
+    clip-graph.h
+    models/models.h)
+
+# mtmd-audio.cpp + mtmd-helper*.cpp pull in miniaudio (pthread
+# scheduler APIs) and sheredom/subprocess (POSIX spawn) — neither
+# available under wasi-sdk 33.  Library-only builds targeting the
+# image-inference lane omit them.  Consumers that need audio /
+# video / helper utilities keep them via the default path.
+if (NOT LLAMA_BUILD_MTMD_ONLY)
+    list(APPEND MTMD_SOURCES
+        mtmd-audio.cpp
+        mtmd-helper.cpp
+        mtmd-helper-gen.cpp
+        mtmd-helper-common.h
+        mtmd-helper.h)
+endif()
+
 add_library(mtmd
-            mtmd.cpp
-            mtmd-audio.cpp
-            mtmd-image.cpp
-            mtmd.h
-            mtmd-internal.h
-            mtmd-helper.cpp
-            mtmd-helper-gen.cpp
-            mtmd-helper-common.h
-            mtmd-helper.h
-            clip.cpp
-            clip.h
-            clip-impl.h
-            clip-model.h
-            clip-graph.h
-            models/models.h
+            ${MTMD_SOURCES}
             models/cogvlm.cpp
             models/conformer.cpp
             models/deepseek4v.cpp

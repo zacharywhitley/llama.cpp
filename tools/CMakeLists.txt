@@ -13,6 +13,13 @@ llama_add_compile_flags()
 # tools
 
 if (EMSCRIPTEN)
+elseif (LLAMA_BUILD_MTMD_ONLY)
+    # Library-only mtmd build, e.g. the cognition wasi-sdk shim
+    # composed-wasm path.  Skips every other tool subdirectory
+    # (batched-bench, imatrix, quantize, ...) since those build
+    # executables that either need subprocess support (curl/exec)
+    # or a native CPU backend that wasi-sdk doesn't provide.
+    add_subdirectory(mtmd)
 else()
     add_subdirectory(batched-bench)
     add_subdirectory(gguf-split)
